@@ -1,10 +1,12 @@
 const Koa = require('koa')
 const fs = require('fs')
 const path = require('path')
+const compilerSFC = require('@vue/compiler-sfc')
+const compilerDOM = require('@vue/compiler-dom')
 const app = new Koa()
 
 app.use(async ctx => {
-    const {url} = ctx.request
+    const {url, query} = ctx.request
     if (url === '/') {
         ctx.type = 'text/html'
         ctx.body = fs.readFileSync(path.join(__dirname, './index.html'), 'utf-8')
@@ -22,6 +24,30 @@ app.use(async ctx => {
         const result = fs.readFileSync(filePath, 'utf-8')
         ctx.type = 'application/javascript'
         ctx.body = rewriteImport(result)
+    } else if (url.indexOf('.vue') > -1) {
+        // 获取文件路径
+        const p = path.join(__dirname , url.split('?')[0])
+        const result = compilerSFC.parse(fs.readFileSync(p, 'utf-8'))
+        if (!query.type) {
+            // sfc 处理
+            // 获取脚本内容
+            const scriptContent = result.descriptor.script.content
+            // 替换 scriptContent 为一个常量 方便后续修改
+            const script = scriptContent.replace('export default', 'const __script = ')
+            ctx.type = 'application/javascript'
+            ctx.body = `
+            ${rewriteImport(script)}
+            import {render as __render} from '${url}?type=template'
+            __script.render = __render
+            export default __script
+        `
+        } else if (query.type === 'template'){
+            const tpl = result.descriptor.template.content
+            // 编译为render
+           const render = compilerDOM.compile(tpl, {mode: 'module'}).code
+            ctx.type = 'application/javascript'
+            ctx.body = rewriteImport(render)
+        }
     }
 
 })
